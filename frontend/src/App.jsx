@@ -1,5 +1,11 @@
 import { useState } from "react";
 
+const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:8000'  // Local development
+  : '/api';                    // Docker (proxied through nginx)
+
+console.log('Using API_URL:', API_URL);
+
 export default function App() {
   const [player, setPlayer] = useState("");
   const [detailedStats, setDetailedStats] = useState([]);
@@ -22,9 +28,15 @@ export default function App() {
       setCareerSummary(null);
       setProjections(null);
       
+      console.log(`Fetching data for: ${player}`);
+      console.log(`API URL: ${API_URL}`);
+      
+      // Fetch detailed stats
       const detailedRes = await fetch(
-        `http://localhost:8000/player/detailed-stats?player=${encodeURIComponent(player)}`
+        `${API_URL}/player/detailed-stats?player=${encodeURIComponent(player)}`
       );
+      
+      console.log(`Detailed stats response status: ${detailedRes.status}`);
       
       if (!detailedRes.ok) {
         const errorData = await detailedRes.json().catch(() => ({}));
@@ -32,31 +44,43 @@ export default function App() {
       }
       
       const detailedData = await detailedRes.json();
+      console.log(`Detailed stats received: ${detailedData.length} seasons`);
       setDetailedStats(detailedData);
       
+      // Fetch career summary
       const summaryRes = await fetch(
-        `http://localhost:8000/player/career-summary?player=${encodeURIComponent(player)}`
+        `${API_URL}/player/career-summary?player=${encodeURIComponent(player)}`
       );
       
       if (summaryRes.ok) {
         const summaryData = await summaryRes.json();
+        console.log(`Career summary received`);
         setCareerSummary(summaryData);
       }
       
+      // Fetch projections
       const projectionsRes = await fetch(
-        `http://localhost:8000/projections/all?player=${encodeURIComponent(player)}&season=2025-26`
+        `${API_URL}/projections/all?player=${encodeURIComponent(player)}&season=2025-26`
       );
       
       if (projectionsRes.ok) {
         const projectionsData = await projectionsRes.json();
+        console.log(`Projections received`);
         setProjections(projectionsData);
       }
       
     } catch (e) {
+      console.error("Error loading player data:", e);
       setDetailedStats([]);
       setCareerSummary(null);
       setProjections(null);
-      setError(e.message);
+      
+      // More detailed error message
+      if (e.message.includes("Failed to fetch")) {
+        setError(`Cannot connect to backend at ${API_URL}. Make sure the backend server is running.`);
+      } else {
+        setError(e.message);
+      }
     } finally {
       setLoading(false);
     }

@@ -16,7 +16,14 @@ app = FastAPI(title="NBA Fantasy Points API with Projections")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",      # Local dev
+        "http://localhost:3000",       # Alternative local port
+        "http://localhost",            # Docker frontend
+        "http://frontend",             # Docker service name
+        "http://127.0.0.1:5173",
+        "null"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
