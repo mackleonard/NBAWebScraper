@@ -5,4 +5,7 @@ numpy
 matplotlib
 fastapi
 uvicorn
-npm
+sqlalchemy>=2.0.0
+psycopg2-binary  # PostgreSQL driver
+python-dotenv    # Environment variables
+alembic          # Database migrations (optional)

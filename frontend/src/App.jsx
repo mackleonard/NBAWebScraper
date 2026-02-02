@@ -328,13 +328,13 @@ export default function App() {
                           <div className="border-2 border-black p-4 bg-white">
                             <div className="text-xs uppercase font-black mb-1">Per Game</div>
                             <div className="text-3xl font-black">
-                              {data.projected_fantasy_points_per_game}
+                              {data.projected_fantasy_points_per_game} FP
                             </div>
                           </div>
                           <div className="border-2 border-black p-4 bg-white">
                             <div className="text-xs uppercase font-black mb-1">Season (82G)</div>
                             <div className="text-3xl font-black">
-                              {data.projected_fantasy_points_season}
+                              {data.projected_fantasy_points_season} FP
                             </div>
                           </div>
                         </div>
@@ -369,7 +369,7 @@ export default function App() {
                     <th className="text-right p-3 font-black uppercase border-r-2 border-black">SPG</th>
                     <th className="text-right p-3 font-black uppercase border-r-2 border-black">BPG</th>
                     <th className="text-right p-3 font-black uppercase border-r-2 border-black">FG%</th>
-                    <th className="text-right p-3 font-black uppercase">FANT</th>
+                    <th className="text-right p-3 font-black uppercase">FPTS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -444,10 +444,10 @@ export default function App() {
                         {r.season}
                       </td>
                       <td className="p-4 text-right font-black text-2xl border-r-2 border-black">
-                        {r.fantasy_points.toLocaleString(undefined, {maximumFractionDigits: 1})}
+                        {r.fantasy_points.toLocaleString(undefined, {maximumFractionDigits: 1})} FP
                       </td>
                       <td className="p-4 text-right font-black text-lg border-r-2 border-black">
-                        {r.fantasy_ppg}
+                        {r.fantasy_ppg} FP
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-4">

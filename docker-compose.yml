@@ -1,6 +1,27 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: nba-db
+    environment:
+      POSTGRES_USER: nbauser
+      POSTGRES_PASSWORD: nbapassword
+      POSTGRES_DB: nbaanalytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nbauser -d nbaanalytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nba-network
+
+  # Backend API
   backend:
     build: 
       context: ./backend
@@ -10,6 +31,10 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://nbauser:nbapassword@db:5432/nbaanalytics
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
@@ -20,6 +45,7 @@ services:
     networks:
       - nba-network
 
+  # Frontend
   frontend:
     build:
       context: ./frontend
@@ -37,3 +63,7 @@ services:
 networks:
   nba-network:
     driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
