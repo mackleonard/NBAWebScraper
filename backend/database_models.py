@@ -1,4 +1,9 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text
+"""
+Database models for NBA Analytics
+Uses SQLAlchemy ORM for database operations
+"""
+
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -33,7 +38,7 @@ class SeasonStats(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     player_id = Column(Integer, ForeignKey('players.id'), nullable=False)
-    season = Column(String(10), nullable=False, index=True)  # e.g., "2024-25"
+    season = Column(String(10), nullable=False, index=True)  # e.g., "2025-26"
     
     # Game stats
     games_played = Column(Integer)
@@ -152,3 +157,63 @@ class CachedData(Base):
     
     def __repr__(self):
         return f"<CachedData(key='{self.cache_key}', expires={self.expires_at})>"
+
+
+class FantasySettings(Base):
+    """Store user's custom fantasy scoring settings"""
+    __tablename__ = 'fantasy_settings'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), unique=True, index=True, nullable=False)  # Session ID or user ID
+    
+    # Scoring weights
+    points_weight = Column(Float, default=1.0)
+    rebounds_weight = Column(Float, default=1.0)
+    assists_weight = Column(Float, default=1.5)
+    steals_weight = Column(Float, default=2.0)
+    blocks_weight = Column(Float, default=2.0)
+    turnovers_weight = Column(Float, default=-2.0)
+    three_pointers_weight = Column(Float, default=1.0)  # Bonus
+    offensive_rebounds_weight = Column(Float, default=0.5)  # Bonus
+    
+    # Additional optional stats
+    field_goals_made_weight = Column(Float, default=0.0)
+    field_goals_missed_weight = Column(Float, default=0.0)
+    free_throws_made_weight = Column(Float, default=0.0)
+    free_throws_missed_weight = Column(Float, default=0.0)
+    double_double_bonus = Column(Float, default=0.0)
+    triple_double_bonus = Column(Float, default=0.0)
+    
+    # Settings metadata
+    name = Column(String(100), default="Custom Settings")  # User-defined name
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<FantasySettings(user_id='{self.user_id}', name='{self.name}')>"
+    
+    def to_dict(self):
+        """Convert to dictionary for easy JSON serialization"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'name': self.name,
+            'points': self.points_weight,
+            'rebounds': self.rebounds_weight,
+            'assists': self.assists_weight,
+            'steals': self.steals_weight,
+            'blocks': self.blocks_weight,
+            'turnovers': self.turnovers_weight,
+            'three_pointers': self.three_pointers_weight,
+            'offensive_rebounds': self.offensive_rebounds_weight,
+            'field_goals_made': self.field_goals_made_weight,
+            'field_goals_missed': self.field_goals_missed_weight,
+            'free_throws_made': self.free_throws_made_weight,
+            'free_throws_missed': self.free_throws_missed_weight,
+            'double_double': self.double_double_bonus,
+            'triple_double': self.triple_double_bonus,
+            'is_default': self.is_default,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }

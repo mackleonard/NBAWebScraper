@@ -63,10 +63,25 @@ def search_players(db: Session, query: str, limit: int = 10) -> List[Player]:
     ).limit(limit).all()
 
 
+# ==================== SHARED HELPERS ====================
+
+def _sanitize_numeric(value):
+    """Convert numpy numeric types to plain Python float/int so psycopg2 can serialize them."""
+    if value is None:
+        return None
+    # hasattr check works for np.float64, np.int64, etc. without importing numpy
+    if hasattr(value, 'item'):
+        return value.item()
+    return value
+
+
 # ==================== SEASON STATS OPERATIONS ====================
 
 def save_season_stats(db: Session, player_id: int, season: str, stats: dict) -> SeasonStats:
     """Save or update season statistics"""
+    # Strip numpy types — same issue as save_projection
+    stats = {k: _sanitize_numeric(v) for k, v in stats.items()}
+
     # Check if stats already exist
     existing = db.query(SeasonStats).filter(
         and_(
@@ -118,6 +133,9 @@ def get_season_stats(db: Session, player_id: int, season: str) -> Optional[Seaso
 def save_projection(db: Session, player_id: int, season: str, 
                    projection_type: str, projection_data: dict) -> Projection:
     """Save player projection"""
+    # Strip numpy types out of every value — psycopg2 chokes on np.float64 etc.
+    projection_data = {k: _sanitize_numeric(v) for k, v in projection_data.items()}
+
     # Check if projection exists
     existing = db.query(Projection).filter(
         and_(
@@ -240,7 +258,17 @@ def get_cached_data(db: Session, cache_key: str) -> Optional[dict]:
 def set_cached_data(db: Session, cache_key: str, data: dict, 
                    ttl_minutes: int = 60) -> CachedData:
     """Cache data with expiration time"""
+    import json as _json
+
+    class _NumpySafe(_json.JSONEncoder):
+        """Serialise numpy scalars that plain json can't handle."""
+        def default(self, obj):
+            if hasattr(obj, 'item'):          # np.float64, np.int64, …
+                return obj.item()
+            return super().default(obj)
+
     expires_at = datetime.utcnow() + timedelta(minutes=ttl_minutes)
+    serialised = _json.dumps(data, cls=_NumpySafe)
     
     # Check if cache key exists
     existing = db.query(CachedData).filter(
@@ -249,7 +277,7 @@ def set_cached_data(db: Session, cache_key: str, data: dict,
     
     if existing:
         # Update existing
-        existing.cache_value = json.dumps(data)
+        existing.cache_value = serialised
         existing.expires_at = expires_at
         db.commit()
         db.refresh(existing)
@@ -258,7 +286,7 @@ def set_cached_data(db: Session, cache_key: str, data: dict,
         # Create new
         cache = CachedData(
             cache_key=cache_key,
-            cache_value=json.dumps(data),
+            cache_value=serialised,
             expires_at=expires_at
         )
         db.add(cache)

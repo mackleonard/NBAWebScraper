@@ -15,6 +15,17 @@ from nba_api.stats.endpoints import playergamelog
 import time
 from datetime import datetime
 
+# ---------------------------------------------------------------------------
+# psycopg2 (especially with numpy ≥ 2.0) cannot adapt np.float64 / np.int64.
+# Python's built-in round() preserves the numpy scalar type.
+# Shadow it here so every round() in this module returns a plain Python float.
+# ---------------------------------------------------------------------------
+_builtin_round = round
+def round(number, ndigits=None):
+    result = _builtin_round(number, ndigits) if ndigits is not None else _builtin_round(number)
+    return float(result) if hasattr(result, 'item') else result
+
+
 def get_recent_games(player_name, num_games=10, season="2025-26"):
     """
     Get a player's most recent games for short-term projections
@@ -23,21 +34,21 @@ def get_recent_games(player_name, num_games=10, season="2025-26"):
         player_id = get_player_id(player_name)
         if player_id is None:
             return None
-        
+
         time.sleep(0.6)
         game_log = playergamelog.PlayerGameLog(
             player_id=player_id,
             season=season
         )
-        
+
         df = game_log.get_data_frames()[0]
-        
+
         if df.empty:
             return None
-        
+
         # Get most recent games
         recent = df.head(num_games)
-        
+
         return pd.DataFrame({
             'game_date': pd.to_datetime(recent['GAME_DATE']),
             'matchup': recent['MATCHUP'],
@@ -53,7 +64,7 @@ def get_recent_games(player_name, num_games=10, season="2025-26"):
             'fg3m': pd.to_numeric(recent['FG3M'], errors='coerce'),
             'fg3a': pd.to_numeric(recent['FG3A'], errors='coerce'),
         }).fillna(0)
-        
+
     except Exception as e:
         print(f"Error getting recent games: {e}")
         return None
@@ -65,10 +76,10 @@ def calculate_weighted_average(values, weights=None):
     if weights is None:
         # Exponential decay: most recent game has highest weight
         weights = np.exp(np.linspace(0, 1, len(values)))
-    
+
     if len(values) == 0 or np.sum(weights) == 0:
         return 0
-    
+
     return np.average(values, weights=weights)
 
 def project_next_game(player_name, num_recent_games=10, season="2025-26"):
@@ -78,13 +89,13 @@ def project_next_game(player_name, num_recent_games=10, season="2025-26"):
     """
     try:
         recent_games = get_recent_games(player_name, num_recent_games, season)
-        
+
         if recent_games is None or recent_games.empty:
             return None
-        
+
         # Create exponential weights (more recent = higher weight)
         weights = np.exp(np.linspace(0, 2, len(recent_games)))[::-1]  # Reverse for chronological order
-        
+
         projection = {
             'method': 'weighted_recent_games',
             'games_analyzed': len(recent_games),
@@ -112,7 +123,7 @@ def project_next_game(player_name, num_recent_games=10, season="2025-26"):
                 'trend': calculate_trend(recent_games)
             }
         }
-        
+
         # Calculate projected fantasy points
         stats = projection['projected_stats']
         projection['projected_fantasy_points'] = round(
@@ -125,9 +136,9 @@ def project_next_game(player_name, num_recent_games=10, season="2025-26"):
             stats['three_pointers_made'] +
             0  # OREB not in game log, using 0
         , 1)
-        
+
         return projection
-        
+
     except Exception as e:
         print(f"Error projecting next game: {e}")
         return None
@@ -138,15 +149,15 @@ def calculate_trend(recent_games):
     """
     if len(recent_games) < 5:
         return "insufficient_data"
-    
+
     # Compare first half vs second half of recent games
     mid_point = len(recent_games) // 2
     first_half = recent_games.iloc[mid_point:][['points', 'rebounds', 'assists']].mean()
     second_half = recent_games.iloc[:mid_point][['points', 'rebounds', 'assists']].mean()
-    
+
     # Calculate percentage change
     pct_change = ((second_half - first_half) / first_half * 100).mean()
-    
+
     if pct_change > 10:
         return "trending_up"
     elif pct_change < -10:
@@ -154,21 +165,25 @@ def calculate_trend(recent_games):
     else:
         return "stable"
 
-def project_season(player_name, method="career_average"):
+def project_season(player_name, method="career_average", career_stats=None):
     """
     Project full season stats based on various methods
-    
+
     Methods:
     - career_average: Use career averages
     - recent_seasons: Weight recent 3 seasons more heavily
     - age_adjusted: Adjust based on player age and career stage
+
+    Pass career_stats (the raw DataFrame from PlayerCareerStats) to avoid
+    re-fetching from the NBA API on every call.
     """
     try:
-        career_stats = calculate_player_career_stats_regular_season(player_name)
-        
+        if career_stats is None:
+            career_stats = calculate_player_career_stats_regular_season(player_name)
+
         if career_stats is None or career_stats.empty:
             return None
-        
+
         # Prepare data
         df = pd.DataFrame({
             'season': career_stats['SEASON_ID'].astype(str),
@@ -184,7 +199,7 @@ def project_season(player_name, method="career_average"):
             'fgm': pd.to_numeric(career_stats['FGM'], errors='coerce'),
             'fga': pd.to_numeric(career_stats['FGA'], errors='coerce'),
         }).fillna(0)
-        
+
         # Calculate per-game stats
         games = df['games'].replace(0, 1)
         df['ppg'] = df['points'] / games
@@ -195,12 +210,12 @@ def project_season(player_name, method="career_average"):
         df['tpg'] = df['turnovers'] / games
         df['three_pg'] = df['fg3m'] / games
         df['mpg'] = df['minutes'] / games
-        
+
         projection = {
             'method': method,
             'seasons_analyzed': len(df),
         }
-        
+
         if method == "career_average":
             # Simple career average
             projection['projected_per_game'] = {
@@ -213,12 +228,12 @@ def project_season(player_name, method="career_average"):
                 'turnovers': round(df['tpg'].mean(), 1),
                 'three_pointers': round(df['three_pg'].mean(), 1),
             }
-            
+
         elif method == "recent_seasons":
             # Weight last 3 seasons more heavily
             recent = df.tail(3)
             weights = np.array([1, 2, 3])[:len(recent)]  # More weight to recent
-            
+
             projection['projected_per_game'] = {
                 'minutes': round(np.average(recent['mpg'], weights=weights), 1),
                 'points': round(np.average(recent['ppg'], weights=weights), 1),
@@ -229,22 +244,22 @@ def project_season(player_name, method="career_average"):
                 'turnovers': round(np.average(recent['tpg'], weights=weights), 1),
                 'three_pointers': round(np.average(recent['three_pg'], weights=weights), 1),
             }
-            
+
         elif method == "age_adjusted":
             # Adjust based on career trajectory
             recent = df.tail(3)
-            
+
             # Calculate trend
             if len(df) >= 3:
                 recent_avg = recent[['ppg', 'rpg', 'apg']].mean()
                 career_avg = df[['ppg', 'rpg', 'apg']].mean()
-                
+
                 # If recent performance is declining, adjust down
                 adjustment = (recent_avg / career_avg).mean()
-                adjustment = min(1.0, max(0.85, adjustment))  # Cap between 85% and 100%
+                adjustment = min(1.0, max(0.85, float(adjustment)))  # Cap between 85% and 100%
             else:
                 adjustment = 1.0
-            
+
             base_projection = {
                 'minutes': round(recent['mpg'].mean() * adjustment, 1),
                 'points': round(recent['ppg'].mean() * adjustment, 1),
@@ -255,10 +270,10 @@ def project_season(player_name, method="career_average"):
                 'turnovers': round(recent['tpg'].mean() * adjustment, 1),
                 'three_pointers': round(recent['three_pg'].mean() * adjustment, 1),
             }
-            
+
             projection['projected_per_game'] = base_projection
             projection['adjustment_factor'] = round(adjustment, 3)
-        
+
         # Calculate season totals (assuming 82 games)
         ppg = projection['projected_per_game']
         projection['projected_season_totals'] = {
@@ -272,7 +287,7 @@ def project_season(player_name, method="career_average"):
             'turnovers': round(ppg['turnovers'] * 82, 0),
             'three_pointers': round(ppg['three_pointers'] * 82, 0),
         }
-        
+
         # Fantasy points
         projection['projected_fantasy_points_per_game'] = round(
             ppg['points'] +
@@ -283,34 +298,39 @@ def project_season(player_name, method="career_average"):
             ppg['turnovers'] * 2 +
             ppg['three_pointers']
         , 1)
-        
+
         projection['projected_fantasy_points_season'] = round(
             projection['projected_fantasy_points_per_game'] * 82, 1
         )
-        
+
         return projection
-        
+
     except Exception as e:
         print(f"Error projecting season: {e}")
         return None
 
 def get_all_projections(player_name, season="2025-26"):
     """
-    Get comprehensive projections including multiple methods
+    Get comprehensive projections including multiple methods.
+    Fetches career stats ONCE and reuses the dataframe for all three
+    season projection methods to avoid hitting the NBA API 3 extra times.
     """
     try:
+        # Fetch career stats once — shared by all three season projection methods
+        career_stats = calculate_player_career_stats_regular_season(player_name)
+
         projections = {
             'player': player_name,
             'next_game': project_next_game(player_name, num_recent_games=10, season=season),
             'season_projections': {
-                'career_average': project_season(player_name, method="career_average"),
-                'recent_seasons': project_season(player_name, method="recent_seasons"),
-                'age_adjusted': project_season(player_name, method="age_adjusted"),
+                'career_average': project_season(player_name, method="career_average", career_stats=career_stats),
+                'recent_seasons': project_season(player_name, method="recent_seasons", career_stats=career_stats),
+                'age_adjusted':   project_season(player_name, method="age_adjusted",   career_stats=career_stats),
             }
         }
-        
+
         return projections
-        
+
     except Exception as e:
         print(f"Error getting all projections: {e}")
         return None
@@ -322,30 +342,30 @@ def compare_projection_accuracy(player_name, num_games_back=10, season="2025-26"
     """
     try:
         recent_games = get_recent_games(player_name, num_games_back * 2, season)
-        
+
         if recent_games is None or len(recent_games) < num_games_back * 2:
             return None
-        
+
         # Use first half to project, second half to validate
         training_data = recent_games.iloc[num_games_back:]
         validation_data = recent_games.iloc[:num_games_back]
-        
+
         # Calculate projection based on training data
         weights = np.exp(np.linspace(0, 2, len(training_data)))[::-1]
-        
+
         projected = {
             'points': calculate_weighted_average(training_data['points'], weights),
             'rebounds': calculate_weighted_average(training_data['rebounds'], weights),
             'assists': calculate_weighted_average(training_data['assists'], weights),
         }
-        
+
         # Compare to actual
         actual = {
             'points': validation_data['points'].mean(),
             'rebounds': validation_data['rebounds'].mean(),
             'assists': validation_data['assists'].mean(),
         }
-        
+
         # Calculate accuracy
         accuracy = {}
         for stat in projected:
@@ -357,13 +377,13 @@ def compare_projection_accuracy(player_name, num_games_back=10, season="2025-26"
                 'error': round(error, 1),
                 'accuracy': round(100 - pct_error, 1)
             }
-        
+
         return {
             'validation_games': num_games_back,
             'accuracy': accuracy,
             'overall_accuracy': round(np.mean([accuracy[s]['accuracy'] for s in accuracy]), 1)
         }
-        
+
     except Exception as e:
-        print(f"Error comparing accuracy: {e}")
+        print(f"Error comparing projection accuracy: {e}")
         return None
