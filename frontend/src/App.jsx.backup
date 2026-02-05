@@ -1,0 +1,500 @@
+import { useState, useEffect } from "react";
+
+// Local dev: talk to uvicorn directly on 8000
+// Docker:    nginx proxies /api/* → backend:8000
+const API_URL =
+  window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? "http://localhost:8000"
+    : "/api";
+
+console.log("Using API_URL:", API_URL);
+
+export default function App() {
+  const [player, setPlayer] = useState("");
+  const [inputValue, setInputValue] = useState("");
+
+  // Data
+  const [careerSummary, setCareerSummary] = useState(null);
+  const [detailedStats, setDetailedStats] = useState([]);
+  const [projections, setProjections] = useState(null);
+  const [popularPlayers, setPopularPlayers] = useState([]);
+  const [dbStats, setDbStats] = useState(null);
+
+  // UI
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [viewMode, setViewMode] = useState("projections"); // projections | detailed | simple
+
+  // ── on mount: popular players + db ribbon ──────────────────────────────────
+  useEffect(() => {
+    fetch(`${API_URL}/analytics/popular-players?limit=5`)
+      .then((r) => r.json())
+      .then(setPopularPlayers)
+      .catch(() => {});
+    fetch(`${API_URL}/db/stats`)
+      .then((r) => r.json())
+      .then(setDbStats)
+      .catch(() => {});
+  }, []);
+
+  // ── master fetch when player changes ────────────────────────────────────────
+  useEffect(() => {
+    if (!player) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setCareerSummary(null);
+    setDetailedStats([]);
+    setProjections(null);
+
+    async function fetchAll() {
+      try {
+        const [sumRes, detRes, projRes] = await Promise.all([
+          fetch(`${API_URL}/player/career-summary?player=${encodeURIComponent(player)}`),
+          fetch(`${API_URL}/player/detailed-stats?player=${encodeURIComponent(player)}`),
+          fetch(`${API_URL}/projections/all?player=${encodeURIComponent(player)}&season=2025-26`),
+        ]);
+
+        // Log every response status so we can see what's failing
+        console.log("career-summary status:", sumRes.status);
+        console.log("detailed-stats status:", detRes.status);
+        console.log("projections/all status:", projRes.status);
+
+        if (!sumRes.ok) {
+          const err = await sumRes.json().catch(() => ({}));
+          throw new Error(err.detail || "Player not found");
+        }
+
+        if (!cancelled) {
+          setCareerSummary(await sumRes.json());
+          if (detRes.ok) setDetailedStats(await detRes.json());
+
+          // Projections: log the raw body so we can see exactly what comes back
+          const projText = await projRes.text();
+          console.log("projections/all raw response:", projText);
+          if (projRes.ok && projText) {
+            try {
+              setProjections(JSON.parse(projText));
+            } catch {
+              console.error("Failed to parse projections JSON");
+            }
+          } else {
+            console.warn("Projections endpoint returned", projRes.status, projText);
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          if (e.message.includes("Failed to fetch"))
+            setError(`Cannot connect to backend at ${API_URL}. Make sure the backend is running.`);
+          else setError(e.message);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [player]);
+
+  const handleSubmit = () => {
+    if (inputValue.trim()) setPlayer(inputValue.trim());
+  };
+
+  const maxFantasyPoints = Math.max(...detailedStats.map((r) => r.fantasy_points), 0);
+
+  // ── render ──────────────────────────────────────────────────────────────────
+  return (
+    <div className="min-h-screen bg-zinc-50 font-mono">
+      <div className="max-w-6xl mx-auto px-4 md:px-8 py-10 md:py-16">
+
+        {/* ── HEADER ── */}
+        <div className="mb-10 border-8 border-black p-6 md:p-8 bg-white relative">
+          <div className="absolute -top-4 -right-4 w-20 h-20 bg-orange-500 border-4 border-black"></div>
+          <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tighter mb-2">
+            NBA<br />ANALYTICS
+          </h1>
+          <div className="w-32 h-2 bg-black"></div>
+        </div>
+
+        {/* ── DB STATS RIBBON ── */}
+        {dbStats && (
+          <div className="border-4 border-black bg-purple-100 px-4 py-2 mb-6 flex flex-wrap gap-4 text-sm font-black uppercase">
+            <span>👤 {dbStats.total_players} Players</span>
+            <span>📦 {dbStats.cached_entries} Cached</span>
+            <span>🔍 {dbStats.total_searches} Searches</span>
+          </div>
+        )}
+
+        {/* ── SEARCH ── */}
+        <div className="mb-8 border-4 border-black bg-white">
+          <div className="border-b-4 border-black p-4 bg-zinc-900 text-white">
+            <p className="font-bold uppercase text-sm tracking-wider">Search Player</p>
+          </div>
+          <div className="p-6">
+            <div className="flex gap-4">
+              <input
+                className="flex-1 border-4 border-black px-4 py-3 text-lg font-bold uppercase
+                           focus:outline-none focus:bg-yellow-100 transition-colors"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                placeholder="PLAYER NAME"
+                disabled={loading}
+              />
+              <button
+                onClick={handleSubmit}
+                disabled={loading}
+                className="px-8 py-3 border-4 border-black bg-orange-500 font-black uppercase
+                           hover:bg-orange-400 active:translate-x-1 active:translate-y-1
+                           disabled:bg-zinc-300 transition-all
+                           shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]
+                           hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:shadow-none"
+              >
+                {loading ? "WAIT" : "GO"}
+              </button>
+            </div>
+
+            {/* Popular quick-select */}
+            {popularPlayers.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {popularPlayers.map((p) => (
+                  <button
+                    key={p.nba_id}
+                    onClick={() => { setInputValue(p.player_name); setPlayer(p.player_name); }}
+                    className="border-2 border-black bg-zinc-100 px-3 py-1 text-xs font-black uppercase
+                               hover:bg-yellow-100 transition-colors"
+                  >
+                    {p.player_name} <span className="text-zinc-500">({p.search_count}×)</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── LOADING ── */}
+        {loading && (
+          <div className="border-4 border-black bg-white p-12 text-center mb-8">
+            <div className="inline-block border-4 border-black p-4 bg-yellow-100">
+              <p className="font-black uppercase text-lg">LOADING DATA...</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── ERROR ── */}
+        {error && (
+          <div className="border-4 border-black bg-red-500 p-6 mb-8">
+            <p className="font-black uppercase text-white">[ERROR] {error}</p>
+          </div>
+        )}
+
+        {/* ── CAREER SUMMARY CARDS ── */}
+        {careerSummary && !loading && (
+          <div className="mb-8">
+            <div className="border-4 border-black bg-zinc-900 text-white p-4 mb-4">
+              <h2 className="font-black uppercase text-xl">CAREER SUMMARY</h2>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Seasons */}
+              <div className="border-4 border-black bg-white p-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500 -mr-12 -mt-12 rotate-45"></div>
+                <p className="font-black text-sm mb-2 uppercase">Seasons</p>
+                <p className="text-5xl font-black">{careerSummary.seasons_played}</p>
+                <div className="w-full h-2 bg-black mt-4"></div>
+              </div>
+
+              {/* Points */}
+              <div className="border-4 border-black bg-white p-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500 -mr-12 -mt-12 rotate-45"></div>
+                <p className="font-black text-sm mb-2 uppercase">Points</p>
+                <p className="text-5xl font-black">{careerSummary.career_totals.points.toLocaleString()}</p>
+                <div className="w-full h-2 bg-black mt-4"></div>
+                <p className="text-sm font-bold mt-2">{careerSummary.career_averages.ppg} PPG</p>
+              </div>
+
+              {/* Rebounds */}
+              <div className="border-4 border-black bg-white p-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500 -mr-12 -mt-12 rotate-45"></div>
+                <p className="font-black text-sm mb-2 uppercase">Rebounds</p>
+                <p className="text-5xl font-black">{careerSummary.career_totals.rebounds.toLocaleString()}</p>
+                <div className="w-full h-2 bg-black mt-4"></div>
+                <p className="text-sm font-bold mt-2">{careerSummary.career_averages.rpg} RPG</p>
+              </div>
+
+              {/* Assists */}
+              <div className="border-4 border-black bg-white p-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-green-500 -mr-12 -mt-12 rotate-45"></div>
+                <p className="font-black text-sm mb-2 uppercase">Assists</p>
+                <p className="text-5xl font-black">{careerSummary.career_totals.assists.toLocaleString()}</p>
+                <div className="w-full h-2 bg-black mt-4"></div>
+                <p className="text-sm font-bold mt-2">{careerSummary.career_averages.apg} APG</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── VIEW MODE TOGGLE ── */}
+        {detailedStats.length > 0 && !loading && (
+          <div className="mb-8 flex gap-4 flex-wrap">
+            {[
+              { id: "projections", label: "[PROJECTIONS]", active: "bg-purple-500", hover: "hover:bg-purple-400" },
+              { id: "detailed",    label: "[STATS]",       active: "bg-orange-500", hover: "hover:bg-orange-400" },
+              { id: "simple",      label: "[FANTASY]",     active: "bg-blue-500",   hover: "hover:bg-blue-400" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setViewMode(tab.id)}
+                className={`px-6 py-3 border-4 border-black font-black uppercase transition-all
+                            shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]
+                            hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                            active:shadow-none active:translate-x-1 active:translate-y-1
+                            ${viewMode === tab.id ? `${tab.active} text-white` : `bg-white ${tab.hover}`}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════════
+            PROJECTIONS VIEW
+            ═══════════════════════════════════════════════════════════════════════ */}
+        {projections && !loading && viewMode === "projections" && (
+          <div className="space-y-8">
+
+            {/* Next Game */}
+            {projections.next_game && (
+              <div className="border-4 border-black bg-white">
+                <div className="border-b-4 border-black p-4 bg-purple-500">
+                  <h2 className="font-black uppercase text-white text-xl flex items-center gap-3">
+                    [NEXT GAME PROJECTION]
+                    {projections.next_game.games_analyzed && (
+                      <span className="text-sm font-normal">({projections.next_game.games_analyzed} GAMES ANALYZED)</span>
+                    )}
+                  </h2>
+                </div>
+
+                <div className="p-6 md:p-8">
+                  {/* Trend badge */}
+                  {projections.next_game.recent_performance?.trend && (
+                    <div className="mb-6 border-4 border-black p-4 inline-block">
+                      <span className="font-black uppercase mr-4">TREND:</span>
+                      <span className={`font-black uppercase ${
+                        projections.next_game.recent_performance.trend === "trending_up"   ? "text-green-600" :
+                        projections.next_game.recent_performance.trend === "trending_down" ? "text-red-600"   : "text-black"
+                      }`}>
+                        {projections.next_game.recent_performance.trend === "trending_up"   && "[↑ UP]"}
+                        {projections.next_game.recent_performance.trend === "trending_down" && "[↓ DOWN]"}
+                        {projections.next_game.recent_performance.trend === "stable"        && "[→ STABLE]"}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Stat boxes */}
+                  {projections.next_game.projected_stats && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                      {Object.entries(projections.next_game.projected_stats).map(([stat, value]) => (
+                        <div key={stat} className="border-2 border-black p-4 bg-zinc-100">
+                          <div className="text-xs uppercase font-black mb-2">{stat.replace(/_/g, " ")}</div>
+                          <div className="text-4xl font-black">{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Fantasy points highlight */}
+                  <div className="border-4 border-black bg-yellow-400 p-6">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-lg uppercase">Fantasy Points</span>
+                      <span className="text-5xl font-black">{projections.next_game.projected_fantasy_points}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Season Projections — all 3 methods */}
+            {projections.season_projections && (
+              <div className="border-4 border-black bg-white">
+                <div className="border-b-4 border-black p-4 bg-zinc-900">
+                  <h2 className="font-black uppercase text-white text-xl">[SEASON PROJECTIONS / 2025-26]</h2>
+                </div>
+
+                <div className="p-6 md:p-8 space-y-6">
+                  {Object.entries(projections.season_projections).map(([method, data]) => {
+                    if (!data) return null;
+                    return (
+                      <div key={method} className="border-2 border-black p-6 bg-zinc-50">
+                        <h3 className="text-xl font-black mb-4 uppercase flex items-center gap-2">
+                          [{method.replace(/_/g, " ")}]
+                          {data.adjustment_factor && (
+                            <span className="text-sm font-normal text-zinc-500">
+                              (ADJ: {(data.adjustment_factor * 100).toFixed(0)}%)
+                            </span>
+                          )}
+                        </h3>
+
+                        {/* Per-game stat boxes */}
+                        {data.projected_per_game && (
+                          <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
+                            {Object.entries(data.projected_per_game).map(([stat, value]) => (
+                              <div key={stat} className="text-center border border-black p-2 bg-white">
+                                <div className="text-xs uppercase font-bold mb-1">
+                                  {stat.replace(/_/g, " ").replace("three pointers", "3PM")}
+                                </div>
+                                <div className="text-xl font-black">{value}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Fantasy totals row */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="border-2 border-black p-4 bg-white">
+                            <div className="text-xs uppercase font-black mb-1">Per Game</div>
+                            <div className="text-3xl font-black">{data.projected_fantasy_points_per_game}</div>
+                          </div>
+                          <div className="border-2 border-black p-4 bg-white">
+                            <div className="text-xs uppercase font-black mb-1">Season (82G)</div>
+                            <div className="text-3xl font-black">{data.projected_fantasy_points_season}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════════
+            DETAILED STATS VIEW
+            ═══════════════════════════════════════════════════════════════════════ */}
+        {detailedStats.length > 0 && !loading && viewMode === "detailed" && (
+          <div className="border-4 border-black bg-white">
+            <div className="border-b-4 border-black p-4 bg-zinc-900">
+              <h2 className="font-black uppercase text-white text-xl">
+                {player.toUpperCase()} / CAREER DATA
+              </h2>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b-4 border-black bg-zinc-100">
+                    {["Season","GP","MPG","PPG","RPG","APG","SPG","BPG","FG%","3P%","FANT"].map((h) => (
+                      <th key={h} className="p-3 font-black uppercase border-r-2 border-black last:border-r-0 text-right first:text-left">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailedStats.map((r, idx) => {
+                    const isTop = r.fantasy_points === maxFantasyPoints;
+                    return (
+                      <tr
+                        key={idx}
+                        className={`border-b-2 border-black hover:bg-yellow-100 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}
+                      >
+                        <td className="p-3 font-black uppercase border-r-2 border-black">
+                          {isTop && <span className="text-orange-500">[★] </span>}
+                          {r.season}
+                        </td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.games_played}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.mpg}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.ppg}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.rpg}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.apg}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.spg}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.bpg}</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.fg_pct}%</td>
+                        <td className="p-3 text-right font-bold border-r-2 border-black">{r.three_pt_pct}%</td>
+                        <td className="p-3 text-right">
+                          <span className={`font-black text-lg ${isTop ? "text-orange-500" : ""}`}>{r.fantasy_ppg}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════════
+            FANTASY BAR-CHART VIEW
+            ═══════════════════════════════════════════════════════════════════════ */}
+        {detailedStats.length > 0 && !loading && viewMode === "simple" && (
+          <div className="border-4 border-black bg-white">
+            <div className="border-b-4 border-black p-4 bg-zinc-900">
+              <h2 className="font-black uppercase text-white text-xl">
+                {player.toUpperCase()} / FANTASY POINTS
+              </h2>
+            </div>
+
+            <table className="w-full">
+              <thead>
+                <tr className="border-b-4 border-black bg-zinc-100">
+                  <th className="text-left p-4 font-black uppercase border-r-4 border-black">Season</th>
+                  <th className="text-right p-4 font-black uppercase border-r-4 border-black">Total</th>
+                  <th className="text-right p-4 font-black uppercase border-r-4 border-black">Per Game</th>
+                  <th className="text-left p-4 font-black uppercase">Performance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailedStats.map((r, idx) => {
+                  const pct = (r.fantasy_points / maxFantasyPoints) * 100;
+                  const isTop = r.fantasy_points === maxFantasyPoints;
+                  return (
+                    <tr
+                      key={idx}
+                      className={`border-b-2 border-black hover:bg-yellow-100 transition-colors ${idx % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}
+                    >
+                      <td className="p-4 font-black uppercase border-r-2 border-black">
+                        {isTop && <span className="text-orange-500">[★] </span>}
+                        {r.season}
+                      </td>
+                      <td className="p-4 text-right font-black text-2xl border-r-2 border-black">
+                        {r.fantasy_points.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                      </td>
+                      <td className="p-4 text-right font-black text-lg border-r-2 border-black">
+                        {r.fantasy_ppg}
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1 h-8 border-2 border-black bg-zinc-200">
+                            <div
+                              className={`h-full border-r-2 border-black ${isTop ? "bg-orange-500" : "bg-blue-500"}`}
+                              style={{ width: `${pct}%` }}
+                            ></div>
+                          </div>
+                          <span className="font-black text-sm w-12">{pct.toFixed(0)}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ── EMPTY STATE ── */}
+        {!loading && !error && detailedStats.length === 0 && !careerSummary && (
+          <div className="border-4 border-black bg-white p-16 text-center">
+            <div className="inline-block border-4 border-black p-8 mb-6 bg-zinc-100">
+              <div className="text-6xl font-black">[ ? ]</div>
+            </div>
+            <p className="font-black uppercase text-2xl mb-2">NO DATA</p>
+            <p className="uppercase text-sm">Enter a player name to begin</p>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
